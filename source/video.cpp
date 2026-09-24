@@ -1209,12 +1209,18 @@ static void draw_video_frame(const unsigned short *rgb565, unsigned w, unsigned 
     uint64_t t_draw0 = (uint64_t) now_us();
     P.upload_us += t_draw0 - t_upload0;
 
-    // Fullscreen covering entire 960x544 Vita screen (no letterboxing / pillarboxing borders)
+    // Fullscreen covering entire 960x544 Vita screen (no letterboxing / pillarboxing borders).
+    // Overscan slightly past NDC ±1.0 (log_007 flicker fix): a quad at exactly
+    // ±1.0 with GL_LINEAR filtering can leave 1-2px side columns uncovered on
+    // alternating frames (viewport/GXM rounding), showing the clear color
+    // underneath as two vertical lines flickering white<->black (engine clears
+    // white, video clears black). ±1.02 keeps every pixel covered; UVs stay
+    // 0..1 so only a sub-texel sliver of video edge is cropped -- invisible.
     static const GLfloat verts[8] = {
-        -1.0f,  1.0f,
-         1.0f,  1.0f,
-        -1.0f, -1.0f,
-         1.0f, -1.0f,
+        -1.02f,  1.02f,
+         1.02f,  1.02f,
+        -1.02f, -1.02f,
+         1.02f, -1.02f,
     };
     static const GLfloat uvs[8] = {
         0.0f, 0.0f,  1.0f, 0.0f,  0.0f, 1.0f,  1.0f, 1.0f,
