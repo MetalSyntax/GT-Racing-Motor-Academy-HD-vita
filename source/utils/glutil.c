@@ -19,6 +19,7 @@
 #include <string.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/io/stat.h>
+#include <psp2/kernel/processmgr.h>
 
 // Helpers for our handling of shaders
 GLboolean skip_next_compile = GL_FALSE;
@@ -26,6 +27,7 @@ char next_shader_fname[256];
 void load_shader(GLuint shader, const char * string, size_t length);
 
 unsigned int gl_swap_count = 0;
+unsigned int gl_draw_count = 0, gl_draw_us = 0;
 
 void vgl_log(const char *fmt, ...) {
     if (fmt && strstr(fmt, "Shader Compiler: I]"))
@@ -162,7 +164,10 @@ void glDrawArrays_soloader(GLenum mode, GLint first, GLsizei count) {
         l_info("[gl] glDrawArrays(mode=0x%x, first=%d, count=%d)", mode, first, count);
         da_count++;
     }
+    unsigned int t0 = sceKernelGetProcessTimeLow();
     glDrawArrays(mode, first, count);
+    gl_draw_us += sceKernelGetProcessTimeLow() - t0;
+    gl_draw_count++;
 }
 
 void glDrawElements_soloader(GLenum mode, GLsizei count, GLenum type, const void *indices) {
@@ -171,7 +176,10 @@ void glDrawElements_soloader(GLenum mode, GLsizei count, GLenum type, const void
         l_info("[gl] glDrawElements(mode=0x%x, count=%d, type=0x%x)", mode, count, type);
         de_count++;
     }
+    unsigned int t0 = sceKernelGetProcessTimeLow();
     glDrawElements(mode, count, type, indices);
+    gl_draw_us += sceKernelGetProcessTimeLow() - t0;
+    gl_draw_count++;
 }
 
 void glShaderSource_soloader(GLuint shader, GLsizei count,

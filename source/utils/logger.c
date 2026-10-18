@@ -85,6 +85,56 @@ static void _init_log_filename(void) {
     sceClibSnprintf(s_log_filepath, sizeof(s_log_filepath), DATA_PATH "logs/log_001.log");
 }
 
+// Pending file output. Writing to ux0 (fputs+fflush) on the game thread cost
+// up to ~50ms per flush: log_018 showed a 70-80ms spike in every 60-frame
+// perf window. Lines are queued under _log_mutex and written by a low
+// priority thread every 100ms; errors/fatals are still written immediately.
+static char s_ring[64 * 1024];
+static size_t s_ring_len = 0;
+static bool s_ring_overflow = false;
+static SceKernelLwMutexWork _log_io_mutex;
+
+static void _log_drain(void) {
+    static char out[sizeof(s_ring)];
+    static FILE *f = NULL, *f_latest = NULL;
+
+    sceKernelLockLwMutex(&_log_io_mutex, 1, NULL);
+    sceKernelLockLwMutex(&_log_mutex, 1, NULL);
+    size_t len = s_ring_len;
+    memcpy(out, s_ring, len);
+    s_ring_len = 0;
+    s_ring_overflow = false;
+    sceKernelUnlockLwMutex(&_log_mutex, 1);
+
+    if (len > 0) {
+        if (!s_log_cleared) {
+            _init_log_filename();
+            f = fopen(s_log_filepath, "w");
+            // Also mirror to log.log for tools/scripts
+            f_latest = fopen(DATA_PATH "logs/log.log", "w");
+            s_log_cleared = true;
+        }
+        if (f) {
+            fwrite(out, 1, len, f);
+            fflush(f);
+        }
+        if (f_latest) {
+            fwrite(out, 1, len, f_latest);
+            fflush(f_latest);
+        }
+    }
+    sceKernelUnlockLwMutex(&_log_io_mutex, 1);
+}
+
+static int _log_writer_thread(SceSize args, void *argp) {
+    (void) args; (void) argp;
+    for (;;) {
+        sceKernelDelayThread(100 * 1000);
+        _log_drain();
+    }
+    return 0;
+}
+
 static void _log_flush_internal(void) {
     if (s_repeat_count == 0) {
         return;
@@ -103,25 +153,15 @@ static void _log_flush_internal(void) {
 
     sceClibPrintf("%s", buffer_b);
 
-    if (!s_log_inited) {
-        _init_log_filename();
+    // Only queue here: the file write happens on log_writer (see _log_drain).
+    size_t len = strlen(buffer_b);
+    if (s_ring_len + len > sizeof(s_ring))
+        s_ring_overflow = true;  // writer fell behind: drained synchronously by the caller
+    else {
+        memcpy(s_ring + s_ring_len, buffer_b, len);
+        s_ring_len += len;
     }
 
-    // Write to incremental session file (log_001.log, log_002.log, etc.)
-    FILE *f = fopen(s_log_filepath, s_log_cleared ? "a" : "w");
-    if (f) {
-        fputs(buffer_b, f);
-        fclose(f);
-    }
-
-    // Also mirror to log.log for tools/scripts
-    FILE *f_latest = fopen(DATA_PATH "logs/log.log", s_log_cleared ? "a" : "w");
-    if (f_latest) {
-        fputs(buffer_b, f_latest);
-        fclose(f_latest);
-    }
-
-    s_log_cleared = true;
     s_repeat_count = 0;
     s_prev_type = -1;
     s_prev_msg[0] = '\0';
@@ -138,7 +178,13 @@ void _log_print(int t, const char* fmt, ...) {
             sceClibPrintf("Error: failed to create log mutex: 0x%x\n", ret);
             return;
         }
+        sceKernelCreateLwMutex(&_log_io_mutex, "log_io_lock", 0, 0, NULL);
         atomic_store_explicit(&_log_mutex_ready, true, memory_order_relaxed);
+        // Lowest priority, off the game (core 0) and audio mixer (core 1) cores.
+        SceUID th = sceKernelCreateThread("log_writer", _log_writer_thread, 0xBF, 0x4000, 0,
+                                          SCE_KERNEL_CPU_MASK_USER_2, NULL);
+        if (th >= 0)
+            sceKernelStartThread(th, 0, NULL);
     }
     sceKernelLockLwMutex(&_log_mutex, 1, NULL);
 
@@ -170,9 +216,12 @@ void _log_print(int t, const char* fmt, ...) {
         }
     }
 
+    bool drain_now = t == LT_ERROR || t == LT_FATAL || s_ring_overflow;
     if (atomic_load_explicit(&_log_mutex_ready, memory_order_relaxed)) {
         sceKernelUnlockLwMutex(&_log_mutex, 1);
     }
+    if (drain_now)
+        _log_drain();  // crash triage needs errors on disk before the crash
 }
 
 void log_flush(void) {

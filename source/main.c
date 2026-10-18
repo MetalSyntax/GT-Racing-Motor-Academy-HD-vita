@@ -34,6 +34,9 @@ so_module so_mod;
 #define ARG_PHONE_WIDTH 960
 
 int main() {
+    // Game/render thread owns core 0 (audio mixer is pinned to core 1, audio loader
+    // and log writer to core 2), like Asphalt 6, so nothing preempts it mid-frame.
+    sceKernelChangeThreadCpuAffinityMask(0, SCE_KERNEL_CPU_MASK_USER_0);
     soloader_init_all();
 
     // This .so has NO JNI_OnLoad and NO RegisterNatives (confirmed: 0 hits in
@@ -177,13 +180,25 @@ int main() {
         sceKernelPowerTick(0);
         unsigned int t0 = sceKernelGetProcessTimeLow();
         input_poll(&jni, &jni);
+        unsigned int t1 = sceKernelGetProcessTimeLow();
         if (GameRenderer_nativeRender)
             GameRenderer_nativeRender(&jni, &jni);
+        unsigned int t2 = sceKernelGetProcessTimeLow();
         gl_swap();
-        static unsigned int frame_counter = 0;
-        if ((++frame_counter % 60) == 0)
-            log_flush();
         unsigned int dt = sceKernelGetProcessTimeLow() - t0;
+        // Frame budget breakdown (input / game update+GL calls / swap) to tell CPU from GPU bound.
+        static unsigned int frame_counter = 0, sum_in = 0, sum_game = 0, sum_swap = 0, max_dt = 0;
+        sum_in += t1 - t0; sum_game += t2 - t1; sum_swap += dt - (t2 - t0);
+        if (dt > max_dt) max_dt = dt;
+        if ((++frame_counter % 60) == 0) {
+            // gl_draw = part of `game` spent inside vitaGL draw calls (CPU-side GL overhead).
+            l_info("perf: avg input=%.1fms game=%.1fms (gl_draw=%.1fms, %u draws) swap=%.1fms total=%.1fms (max %.1fms)",
+                   sum_in / 60000.0f, sum_game / 60000.0f, gl_draw_us / 60000.0f, gl_draw_count / 60,
+                   sum_swap / 60000.0f, (sum_in + sum_game + sum_swap) / 60000.0f, max_dt / 1000.0f);
+            sum_in = sum_game = sum_swap = max_dt = 0;
+            gl_draw_us = gl_draw_count = 0;
+            log_flush();
+        }
         if (dt < 33000)
             sceKernelDelayThread(33000 - dt);
     }

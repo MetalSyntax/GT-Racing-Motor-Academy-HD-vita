@@ -14,7 +14,7 @@ include("${VITASDK}/share/vita.cmake" REQUIRED)
 set(VITA_APP_NAME "GT Racing Motor Academy HD")
 set(VITA_TITLEID "PSVGTRMA1")
 set(VITA_VPKNAME "gtracingmotoracademyhd")
-set(VITA_VERSION "01.00")
+set(VITA_VERSION "01.10")
 set(VITA_MKSFOEX_FLAGS "-d ATTRIBUTE2=12")
 
 # Optional: used for "send" and "dump" targets
@@ -54,6 +54,10 @@ endif()
 
 # Unique debug definition for loader's logging to not interfere with anything
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  # vita.cmake's Debug flags append -O0, overriding the -O3 below for the whole
+  # loader (audio mixer, FalsoJNI, GL wrappers) -- keep debug logs, not -O0.
+  set(CMAKE_C_FLAGS_DEBUG "-g -DDEBUG -D_DEBUG")
+  set(CMAKE_CXX_FLAGS_DEBUG "-g -DDEBUG -D_DEBUG")
   add_definitions(-DDEBUG_SOLOADER)
   # Uncomment this for verbose FalsoJNI logging:
   #add_definitions(-DFALSOJNI_DEBUGLEVEL=0)
@@ -64,6 +68,9 @@ add_definitions(-D_GNU_SOURCE -D__POSIX_VISIBLE=999999)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wl,-q -O3 -g -ffast-math -mfloat-abi=softfp -Wno-deprecated")
 set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -std=gnu++20 -Wno-write-strings -Wno-psabi")
+
+# Exact IEEE semantics (NaN compares) for the __aeabi_* replacements.
+set_source_files_properties(source/reimpl/vfp_aeabi.c PROPERTIES COMPILE_FLAGS "-fno-fast-math")
 
 add_executable(${CMAKE_PROJECT_NAME}
                source/main.c
@@ -79,6 +86,7 @@ add_executable(${CMAKE_PROJECT_NAME}
                source/reimpl/io.c
                source/reimpl/log.c
                source/reimpl/mem.c
+               source/reimpl/vfp_aeabi.c
                source/reimpl/pthr.c
                source/reimpl/sys.c
                source/reimpl/time64.c

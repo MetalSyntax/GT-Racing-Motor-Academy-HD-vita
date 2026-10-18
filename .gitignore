@@ -30,7 +30,8 @@ assets/
 compile_commands.json
 CMakeCache.txt
 CMakeFiles/
-Makefile
+# Anclado a la raiz: lib/vitagl/Makefile es real (rsync del toolkit no soporta '!')
+/Makefile
 cmake_install.cmake
 *.elf
 *.self

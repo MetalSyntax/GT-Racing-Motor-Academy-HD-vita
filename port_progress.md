@@ -273,3 +273,57 @@
   - Ocultación/muestra de botones HUD al presionar Triángulo.
   - Guardado y retroceso con botón Círculo en menús.
   - Respuesta de frenos (L / Cuadrado / Abajo) y acelerador (R / Cruz / Arriba).
+
+## Issues de usuarios: gas/freno invertidos + auto descentrado en icono Garage (pendiente de probar en consola)
+- **Gas/freno invertidos (`source/input.c`):** el GamePad interno usa máscara `8` = acelerador y `4` = freno; se enviaban al revés. Intercambiadas (afecta R/L, Cruz/Cuadrado, D-Pad Arriba/Abajo).
+- **Auto del icono Garage descentrado (`source/patch.c`):** `AbstractMenu::GetBounds()` (0x11949c) escala X por `OS_SCREEN_H/movieH` e Y por `OS_SCREEN_W/movieW` (ejes cruzados en el binario original; a 800x480 ambos factores valen 1). A 960x544 el viewport 3D del auto queda más abajo. Fix: intercambiar los literales GOT de `OS_SCREEN_H`/`OS_SCREEN_W` en 0x119584/0x11958c. También corrige los hit-zones táctiles que usan `GetBounds`.
+
+## Caídas de FPS en menú (log_012, pendiente de probar en consola)
+- **Causa:** `_log_flush_internal()` (`source/utils/logger.c`) hacía `fopen`+`fclose` de `log_NNN.log` **y** `log.log` por cada línea, en el hilo de render. En menú el juego intercala `Orientation not Enable...` (cada frame) con toques y guardados de `profiles.sav`, así que cada toque disparaba ~8-12 open/close en ux0 (varios ms cada uno) → tirones.
+- **Fix:** ambos `FILE*` se abren una vez y quedan abiertos; `fflush` por línea para no perder el log ante un crash.
+
+## Video intro a ~5 FPS (log_012/013, pendiente de probar en consola)
+- **Datos:** log_012 `avg_fps=1.4`, `decode=201ms/frame`, `tex_upload=203ms/frame` con `lowres=0` (800x480). log_013 se cortó durante el video (sin línea `loop exited`), y el benchmark de arranque dio `yuv_convert=103.7ms` contra 7.6ms en log_012: el costo por frame varía mucho entre corridas.
+- **Referencias:** Shadow Guardian usa `SceAvPlayer` (H.264 por hardware), que no sirve acá porque `gtracing.mp4` es MPEG-4 Part 2. Asphalt 5 usa este mismo reproductor FFmpeg y quedó fluido en consola con `lowres=1`.
+- **Fix:** `source/video.cpp` pasa a `P.vctx->lowres = 1` (decodifica a 400x240 y GL_LINEAR lo escala a pantalla completa). Así decode, conversión YUV y subida de textura hacen 1/4 del trabajo.
+- **Si no llega a 30 fps:** transcodificar el intro a H.264 en PC y reproducirlo con `SceAvPlayer` como Shadow Guardian.
+
+## Minimapa/banderas/auto del Garage desplazados tras el swap de GOT en GetBounds (pendiente de probar en consola)
+- **Causa:** `AbstractMenu::GetBounds()` (0x11949c) cruza dos cosas: el lado de pantalla (GOT `OS_SCREEN_H`/`OS_SCREEN_W`) **y** el extent del movie. X divide por `frame[0xc0]-frame[0xbc]` (alto) e Y por `frame[0xb8]-frame[0xb4]` (ancho). El fix anterior solo intercambiaba el GOT, así que X quedaba 960/480=x2.0 e Y 544/800=x0.68. Se ve en `screenshots/jf|ji/2026-10-18`: minimapa encima de "Selva Negra", bandera arriba a la izquierda y área del auto en blanco.
+- **Fix (`source/patch.c`):** además se intercambian los inmediatos de `movs r3,#imm` en 0x1194fa/0x119500 (0xc0/0xbc → 0xb8/0xb4) y 0x119540/0x119546 (0xb8/0xb4 → 0xc0/0xbc). Queda X×960/800=1.2 e Y×544/480=1.133. Bytes originales verificados en el `.so`.
+- `Lib3D::Begin2DRendering()` arma un ortho de `OS_SCREEN_W`×`OS_SCREEN_H` (960x544) con origen arriba a la izquierda, así que los sprites 2D ya esperan coordenadas de pantalla.
+
+## FPS ingame (~16): instrumentación
+- `source/main.c`: cada 60 frames loguea `perf: avg input/game/swap/total (max)`. Si `game` es ~60ms, el límite es la CPU (update + llamadas GL del motor); si es `swap`, es la GPU.
+
+## log_015: audio de carrera ~20s tarde + FPS ingame (pendiente de probar en consola)
+- **Audio, causa:** `loader_thread` (`source/audio.cpp`) era una cola FIFO única que decodificaba cada OGG **entero** con `stb_vorbis_decode_filename`. La música de carrera (`m_electro_03.ogg`, 9.4M frames, ~36 MB PCM) entra primero y motor, cuenta regresiva e impactos esperan detrás. Además la música no suena hasta terminar de decodificarse completa.
+- **Audio, fix:** los OGG ahora se decodifican de a bloques. `decode_ogg_open` abre el archivo y reserva el buffer, publica el sample al toque y el loader decodifica 8192 frames por stream en round-robin con los pedidos nuevos (hasta 8 a la vez). `SfxSample` tiene `frames` (lo ya decodificado, volatile) y `total`. Si una voz alcanza lo decodificado, `mix_voice` se queda en silencio esperando en vez de cortarse. El loop usa `total`.
+- **FPS (log_015):** en carrera `game=42-58ms` por frame y `swap=0.6ms`, o sea límite de CPU dentro de `nativeRender`, no en el swap. El menú del Garage está igual (~50ms).
+- **Instrumentación:** el log `perf:` ahora incluye `gl_draw` (tiempo dentro de `glDrawArrays`/`glDrawElements` de vitaGL) y la cantidad de draws por frame, para separar el overhead de GL de la lógica del juego.
+- **Autos rojos que después cargan la textura:** sin diagnóstico todavía. El juego no crea hilos de carga (el único `pthread_create` es para DNS).
+
+## log_016: FPS ingame — límite de CPU en float por software (pendiente de probar en consola)
+- **Datos:** en carrera `game=34-54ms` por frame, pero `gl_draw` (tiempo dentro de las draws de vitaGL) da apenas 1.5-2.7ms con 54-119 draws. El costo es CPU del código del juego, no de vitaGL.
+- **Causa 1:** `libGTRacing.so` es armeabi (ARMv5/Thumb-1 sin FPU). Cada operación float es una llamada PLT a `__aeabi_f*` (~10k sitios: 3380 fmul, 2312 fadd, 1486 fsub, 956 fdiv...), y `dynlib.c` las resolvía a la emulación entera de libgcc (verificado con objdump: `__aeabi_fmul` = umull/shifts).
+- **Fix 1:** `source/reimpl/vfp_aeabi.c` implementa fadd/fsub/fmul/fdiv/i2f/ui2f/f2iz/fcmp*/f2d/d2f/i2d/d2iz/dadd/dsub/dmul/ddiv en C. Con softfp cada una compila a `vmov`+op VFP+`vmov` (verificado: `vdiv.f32`, `vcmpe`+`vmrs`). Va con `-fno-fast-math` para mantener la semántica de NaN. Están mapeadas en `dynlib.c`.
+- **Causa 2:** `vita.cmake` mete `-O0` en `CMAKE_C_FLAGS_DEBUG`, que pisa el `-O3` del proyecto. Todo el loader (mixer de audio, FalsoJNI, wrappers GL, pthreads) corría sin optimizar, y el preset por defecto del toolkit es debug.
+- **Fix 2:** `CMakeLists.txt` deja `CMAKE_C/CXX_FLAGS_DEBUG = "-g -DDEBUG -D_DEBUG"`. Se mantienen `DEBUG_SOLOADER` y los logs.
+- **Riesgo:** hay código que nunca se probó optimizado. Si aparece un cuelgue o crash nuevo, la primera sospecha es un flag compartido entre hilos sin `volatile`.
+
+## log_017: FPS confirmado 25-30 + rivales rojos según la distancia (LOD) (parche pendiente de probar)
+- **FPS (confirmado por el usuario):** con VFP `__aeabi_*` y sin `-O0` el juego va estable a 25-30 FPS. En el log, `game=19-24ms` (antes 34-54ms).
+- **Rivales rojos:** el usuario confirma que se ven rojos con la textura por defecto cuando están lejos y cambian de golpe al acercarse. Es el LOD (`CarSceneObject::UpdateLOD`, 0xe2580). Las mallas de LOD 3/4 no reciben la pintura que aplica `AniMgr_v4::ReplaceTexture` en `LoadColor`.
+- **Fix (`source/patch.c`):** en la tabla rodata `s_iPhone3GS_conditions_LOD` (0x2c42dc, entradas de 20 bytes `{lod,dist,trackDist,sectionDiff,refresh}`) el campo `lod` de las entradas 3 (0x2c4304) y 4 (0x2c4318) pasa de 3/4 a 2. Distancias y refresh quedan iguales. `SetupGameForDevice` la copia a `s_LODConditions` en nativeInit, después de `so_patch()`. Está en el primer segmento LOAD, así que offset = dirección.
+- La entrada 5 (15000-30000) no se tocó. Si los autos muy lejanos siguen rojos, poner también 0x2c432c = 2.
+
+## log_018: bajones a ~20 FPS (menú e ingame) (pendiente de probar en consola)
+- **Datos:** en carrera el promedio es `game=21-26ms`, pero cada ventana de 60 frames tiene un `max` de 68-81ms. El menú con el auto 3D va a 35-50ms (150-227 draws, `gl_draw` 4-6ms).
+- **Causa (comparando con Asphalt 6):** el logger escribía (`fputs`+`fflush` a dos archivos en ux0) en el hilo del juego cada vez que cambiaba la línea, y eso pasa varias veces por ventana (`Orientation...`, `heartbeat`, `perf`, toques). Asphalt 6 no escribe al log desde el hilo crítico. Además el hilo principal no tenía afinidad fija y podía compartir núcleo con el mixer de audio (núcleo 1, prioridad 0x40).
+- **Fix 1 (`source/utils/logger.c`):** las líneas se encolan en un buffer de 64KB bajo `_log_mutex`. El hilo `log_writer` (prioridad 0xBF, núcleo 2) las escribe cada 100ms con su propio lock de I/O. `LT_ERROR`/`LT_FATAL` o un buffer lleno se escriben al momento, para que el triage de crashes tenga los errores en disco.
+- **Fix 2 (`source/main.c`):** el hilo principal queda fijo en `SCE_KERNEL_CPU_MASK_USER_0`. Reparto: juego = núcleo 0, mixer = 1, loader de audio + log = 2.
+- **Riesgo:** ante un crash se pueden perder los últimos ≤100ms de líneas info.
+
+## Issue abierto (release Beta v1.1): ~20 FPS los primeros segundos de menú/carrera
+- El usuario confirma que después se estabiliza a 30 FPS sostenidos. Queda como issue conocido en README/RELEASE_BETA.md.
+- **Sospechosos:** carga y primer uso de recursos al entrar (shaders FFP de vitaGL que se generan la primera vez, texturas, carga progresiva de los OGG en el núcleo 2) y el `max` alto de las primeras ventanas `perf:`.

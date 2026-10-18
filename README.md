@@ -30,7 +30,7 @@ The game **is fully playable from career licenses and arcade races to championsh
 
 Since this is a **Beta release**, keep in mind:
 * **Audio:** Fully working with multi-channel sound effects and music, but minor pitch quirks or looping inconsistencies might occasionally occur on certain engine sounds.
-* **Game Speed / Performance:** In heavy tracks or races with many competitor cars on screen, the framerate may dip slightly due to CPU and physics load.
+* **Performance:** Races and menus run at a stable 25-30 FPS. During the first seconds after entering a menu or starting a race the framerate can drop to ~20 FPS before settling at 30.
 * **Controls Scheme:** You **must select the second control option (Touch Controls / Controles Táctiles)** in the in-game options menu for physical buttons to map properly.
 
 ---
@@ -40,10 +40,12 @@ Since this is a **Beta release**, keep in mind:
 - **Native ARM Execution**: `libGTRacing.so` runs natively on the Vita's CPU without any emulation of the game logic code.
 - **Full JNI Lifecycle Bootstrap**: Matches the official Android lifecycle order (`nativeGetJNIEnv` → `GLResLoader.init` → `GLMediaPlayer.init` → `GTRacing.nativeInit` → `GameRenderer.nativeInit` → `GameRenderer.nativeResize`).
 - **vitaGL Graphics Pipeline**: Hardware-accelerated GLES 1.1 fixed-function rendering across the full native 960x544 PlayStation Vita widescreen display.
-- **Native Audio Subsystem**: Multi-channel 48kHz audio mixer via `sceAudioOut`, decoding OGG and WAV sound effects and music tracks with `stb_vorbis` and `minimp3`.
+- **Native Audio Subsystem**: Multi-channel 48kHz audio mixer via `sceAudioOut`, decoding OGG and WAV sound effects and music tracks with `stb_vorbis` and `minimp3`. OGG files are decoded progressively in the background, so race music and engine sounds start immediately.
+- **Hardware Float Acceleration**: The Android library is built for ARMv5 without an FPU, so every float operation is a soft-float call. These calls are redirected to VFP implementations on the Vita's Cortex-A9, which roughly halves the game's CPU time per frame.
 - **Full Physical Controls**: Analog stick and D-Pad steering, L/Square braking, R/Cross acceleration, Start pause, Circle back/auto-save.
 - **HUD Toggle (Triangle)**: On-screen touch buttons (arrows, pedals, steering wheel) start hidden for a clean console aesthetic and can be toggled on/off anytime with **Triangle**.
-- **Intro Video Playback**: Fullscreen software playback of the original MPEG-4 intro movie (`gtracing.mp4` / `gtracing.m4v`) at native 800x480 resolution without letterbox flicker, skippable with **Cross**, **Circle**, or **Start**.
+- **Intro Video Playback**: Fullscreen software playback of the original MPEG-4 intro movie (`gtracing.mp4` / `gtracing.m4v`), decoded at half resolution and upscaled for smooth playback, skippable with **Cross**, **Circle**, or **Start**.
+- **960x544 UI Layout Fixes**: The track minimap, track flags and the Garage 3D car are positioned correctly at the Vita's resolution.
 - **Robust Save & Back Navigation**: Pressing **Circle** in menus triggers an automatic profile save (`Profile.0.gts`) and navigates back cleanly.
 
 ---
@@ -66,7 +68,7 @@ Since this is a **Beta release**, keep in mind:
 
 ### ⚠️ Known Issues
 
-- **Game Speed / Framerate Dips:** On tracks with dense scenery or large grids of opponent cars, the framerate may drop below 30 FPS.
+- **Framerate at the start of menus/races:** The game can run at ~20 FPS for the first seconds after entering a menu or starting a race, then settles at a stable 30 FPS.
 - **Audio Quirks:** Some vehicle engine loops might experience minor pitch stepping or slight volume variations during rapid deceleration.
 - **Control Scheme Selection:** Using accelerometer tilt mode is not supported by physical buttons; always ensure the second control option (**Touch Controls**) is selected.
 

@@ -33,6 +33,8 @@ void glShaderSource_soloader(GLuint shader, GLsizei count,
                              const GLchar **string, const GLint *_length);
 
 extern unsigned int gl_swap_count;
+// Per-frame draw call count / time spent inside vitaGL draws (main.c perf log).
+extern unsigned int gl_draw_count, gl_draw_us;
 void vgl_log(const char *fmt, ...);
 
 void glViewport_soloader(GLint x, GLint y, GLsizei width, GLsizei height);

@@ -76,6 +76,27 @@ extern void *_ZTVN10__cxxabiv117__class_type_infoE;
 extern void *_ZTVN10__cxxabiv120__si_class_type_infoE;
 extern void *_ZTVN10__cxxabiv121__vmi_class_type_infoE;
 extern void *_Znwj;
+// VFP versions of the soft-float helpers (source/reimpl/vfp_aeabi.c).
+extern void *vfp_fadd;
+extern void *vfp_fsub;
+extern void *vfp_fmul;
+extern void *vfp_fdiv;
+extern void *vfp_i2f;
+extern void *vfp_ui2f;
+extern void *vfp_f2iz;
+extern void *vfp_fcmpeq;
+extern void *vfp_fcmplt;
+extern void *vfp_fcmple;
+extern void *vfp_fcmpgt;
+extern void *vfp_fcmpge;
+extern void *vfp_f2d;
+extern void *vfp_d2f;
+extern void *vfp_i2d;
+extern void *vfp_d2iz;
+extern void *vfp_dadd;
+extern void *vfp_dsub;
+extern void *vfp_dmul;
+extern void *vfp_ddiv;
 extern void *__aeabi_atexit;
 extern void *__aeabi_d2lz;
 extern void *__aeabi_d2f;
@@ -180,34 +201,34 @@ so_default_dynlib default_dynlib[] = {
         { "_Znwj", (uintptr_t)&_Znwj },
         { "__aeabi_atexit", (uintptr_t)&__aeabi_atexit },
         { "__aeabi_d2lz", (uintptr_t)&__aeabi_d2lz },
-        { "__aeabi_d2f", (uintptr_t)&__aeabi_d2f },
-        { "__aeabi_d2iz", (uintptr_t)&__aeabi_d2iz },
+        { "__aeabi_d2f", (uintptr_t)&vfp_d2f },
+        { "__aeabi_d2iz", (uintptr_t)&vfp_d2iz },
         { "__aeabi_d2uiz", (uintptr_t)&__aeabi_d2uiz },
         { "__aeabi_d2ulz", (uintptr_t)&__aeabi_d2ulz },
-        { "__aeabi_dadd", (uintptr_t)&__aeabi_dadd },
+        { "__aeabi_dadd", (uintptr_t)&vfp_dadd },
         { "__aeabi_dcmpgt", (uintptr_t)&__aeabi_dcmpgt },
         { "__aeabi_dcmpeq", (uintptr_t)&__aeabi_dcmpeq },
         { "__aeabi_dcmpge", (uintptr_t)&__aeabi_dcmpge },
         { "__aeabi_dcmplt", (uintptr_t)&__aeabi_dcmplt },
         { "__aeabi_dcmpun", (uintptr_t)&__aeabi_dcmpun },
-        { "__aeabi_ddiv", (uintptr_t)&__aeabi_ddiv },
-        { "__aeabi_dmul", (uintptr_t)&__aeabi_dmul },
-        { "__aeabi_dsub", (uintptr_t)&__aeabi_dsub },
+        { "__aeabi_ddiv", (uintptr_t)&vfp_ddiv },
+        { "__aeabi_dmul", (uintptr_t)&vfp_dmul },
+        { "__aeabi_dsub", (uintptr_t)&vfp_dsub },
         { "__aeabi_f2lz", (uintptr_t)&__aeabi_f2lz },
-        { "__aeabi_f2d", (uintptr_t)&__aeabi_f2d },
-        { "__aeabi_f2iz", (uintptr_t)&__aeabi_f2iz },
+        { "__aeabi_f2d", (uintptr_t)&vfp_f2d },
+        { "__aeabi_f2iz", (uintptr_t)&vfp_f2iz },
         { "__aeabi_f2ulz", (uintptr_t)&__aeabi_f2ulz },
-        { "__aeabi_fadd", (uintptr_t)&__aeabi_fadd },
-        { "__aeabi_fcmpeq", (uintptr_t)&__aeabi_fcmpeq },
-        { "__aeabi_fcmpge", (uintptr_t)&__aeabi_fcmpge },
-        { "__aeabi_fcmpgt", (uintptr_t)&__aeabi_fcmpgt },
-        { "__aeabi_fcmple", (uintptr_t)&__aeabi_fcmple },
-        { "__aeabi_fcmplt", (uintptr_t)&__aeabi_fcmplt },
-        { "__aeabi_fdiv", (uintptr_t)&__aeabi_fdiv },
-        { "__aeabi_fmul", (uintptr_t)&__aeabi_fmul },
-        { "__aeabi_fsub", (uintptr_t)&__aeabi_fsub },
-        { "__aeabi_i2d", (uintptr_t)&__aeabi_i2d },
-        { "__aeabi_i2f", (uintptr_t)&__aeabi_i2f },
+        { "__aeabi_fadd", (uintptr_t)&vfp_fadd },
+        { "__aeabi_fcmpeq", (uintptr_t)&vfp_fcmpeq },
+        { "__aeabi_fcmpge", (uintptr_t)&vfp_fcmpge },
+        { "__aeabi_fcmpgt", (uintptr_t)&vfp_fcmpgt },
+        { "__aeabi_fcmple", (uintptr_t)&vfp_fcmple },
+        { "__aeabi_fcmplt", (uintptr_t)&vfp_fcmplt },
+        { "__aeabi_fdiv", (uintptr_t)&vfp_fdiv },
+        { "__aeabi_fmul", (uintptr_t)&vfp_fmul },
+        { "__aeabi_fsub", (uintptr_t)&vfp_fsub },
+        { "__aeabi_i2d", (uintptr_t)&vfp_i2d },
+        { "__aeabi_i2f", (uintptr_t)&vfp_i2f },
         { "__aeabi_idiv", (uintptr_t)&__aeabi_idiv },
         { "__aeabi_idivmod", (uintptr_t)&__aeabi_idivmod },
         { "__aeabi_l2d", (uintptr_t)&__aeabi_l2d },
@@ -227,7 +248,7 @@ so_default_dynlib default_dynlib[] = {
         { "__aeabi_memset4",  (uintptr_t)&__aeabi_memset4 },
         { "__aeabi_memset8", (uintptr_t)&__aeabi_memset8 },
         { "__aeabi_ui2d", (uintptr_t)&__aeabi_ui2d },
-        { "__aeabi_ui2f", (uintptr_t)&__aeabi_ui2f },
+        { "__aeabi_ui2f", (uintptr_t)&vfp_ui2f },
         { "__aeabi_uidiv", (uintptr_t)&__aeabi_uidiv },
         { "__aeabi_uidivmod", (uintptr_t)&__aeabi_uidivmod },
         { "__aeabi_ul2d", (uintptr_t)&__aeabi_ul2d },

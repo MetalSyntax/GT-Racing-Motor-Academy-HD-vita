@@ -243,11 +243,12 @@ static void poll_pad_and_controls(void *env, void *clazz) {
                     if (steer_right) s_GamePad_KeyboardKeyPressed(pPad, 2);
                     else s_GamePad_KeyboardKeyReleased(pPad, 2);
 
-                    if (gas_down) s_GamePad_KeyboardKeyPressed(pPad, 4);
-                    else s_GamePad_KeyboardKeyReleased(pPad, 4);
-
-                    if (brake_down) s_GamePad_KeyboardKeyPressed(pPad, 8);
+                    // Mascara 8 = acelerador, 4 = freno (confirmado en consola: estaban invertidas)
+                    if (gas_down) s_GamePad_KeyboardKeyPressed(pPad, 8);
                     else s_GamePad_KeyboardKeyReleased(pPad, 8);
+
+                    if (brake_down) s_GamePad_KeyboardKeyPressed(pPad, 4);
+                    else s_GamePad_KeyboardKeyReleased(pPad, 4);
                 }
             }
         }

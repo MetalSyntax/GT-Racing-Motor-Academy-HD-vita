@@ -32,7 +32,8 @@
 
 struct SfxSample {
     short *pcm;        // interleaved stereo/mono PCM
-    unsigned frames;
+    volatile unsigned frames;  // decoded so far (grows while an OGG is still streaming in)
+    unsigned total;            // full length; frames == total once decoding is done
     int channels;      // 1 or 2
     int rate;
 };
@@ -156,22 +157,45 @@ static bool decode_mp3_file(const char *path, SfxSample *out) {
     out->pcm = info.buffer;
     out->channels = info.channels;
     out->rate = info.hz;
-    out->frames = (unsigned)(info.samples / info.channels);
+    out->frames = out->total = (unsigned)(info.samples / info.channels);
     return true;
 }
 
-static bool decode_ogg_file(const char *path, SfxSample *out) {
-    short *pcm = NULL;
-    int channels = 0, rate = 0;
-    int samples = stb_vorbis_decode_filename(path, &channels, &rate, &pcm);
-    if (samples <= 0 || !pcm) {
+// OGG decodes progressively: this only opens the stream and allocates the
+// full buffer; loader_thread then fills it chunk by chunk (ogg_stream_step),
+// so a 3-minute race track neither blocks the SFX queued behind it nor
+// delays its own start until it is fully decoded (log_015: ~20s of silence).
+static stb_vorbis *decode_ogg_open(const char *path, SfxSample *out) {
+    stb_vorbis *vb = stb_vorbis_open_filename(path, NULL, NULL);
+    if (!vb) return NULL;
+    stb_vorbis_info info = stb_vorbis_get_info(vb);
+    unsigned total = stb_vorbis_stream_length_in_samples(vb);
+    if (info.channels < 1 || info.channels > 2 || total == 0 ||
+        !(out->pcm = (short *) malloc((size_t) total * info.channels * sizeof(short)))) {
+        stb_vorbis_close(vb);
+        return NULL;
+    }
+    out->channels = info.channels;
+    out->rate = (int) info.sample_rate;
+    out->total = total;
+    out->frames = 0;
+    return vb;
+}
+
+#define OGG_CHUNK_FRAMES 8192
+
+// Decodes one chunk; returns false once the stream is finished (or broke early).
+static bool ogg_stream_step(stb_vorbis *vb, SfxSample *s) {
+    unsigned room = s->total - s->frames;
+    int n = stb_vorbis_get_samples_short_interleaved(vb, s->channels, s->pcm + (size_t) s->frames * s->channels,
+                                                     (int) ((room < OGG_CHUNK_FRAMES ? room : OGG_CHUNK_FRAMES) * s->channels));
+    __sync_synchronize();  // PCM visible to the mixer before the new frame count
+    if (n <= 0) {
+        s->total = s->frames;  // truncated/corrupt stream: play what we have
         return false;
     }
-    out->pcm = pcm;
-    out->channels = channels;
-    out->rate = rate;
-    out->frames = (unsigned) samples;
-    return true;
+    s->frames += (unsigned) n;
+    return s->frames < s->total;
 }
 
 static bool decode_wav_file(const char *path, SfxSample *out) {
@@ -230,27 +254,29 @@ static bool decode_wav_file(const char *path, SfxSample *out) {
     out->pcm = pcm;
     out->channels = channels;
     out->rate = rate;
-    out->frames = dataSize / (channels * sizeof(short));
+    out->frames = out->total = dataSize / (channels * sizeof(short));
     return true;
 }
 
-static SfxSample *sfx_load_sample(const char *path) {
+// *vb_out is set when the sample is an OGG still to be streamed in by the loader.
+static SfxSample *sfx_load_sample(const char *path, stb_vorbis **vb_out) {
     SfxSample *s = (SfxSample *) calloc(1, sizeof(SfxSample));
     if (!s) return NULL;
 
     const char *dot = strrchr(path, '.');
     bool ok = false;
+    *vb_out = NULL;
     if (dot && strcasecmp(dot, ".mp3") == 0) {
         ok = decode_mp3_file(path, s);
-    } else if (dot && strcasecmp(dot, ".ogg") == 0) {
-        ok = decode_ogg_file(path, s);
     } else if (dot && strcasecmp(dot, ".wav") == 0) {
         ok = decode_wav_file(path, s);
     } else {
-        // Try OGG then MP3 then WAV
-        ok = decode_ogg_file(path, s);
-        if (!ok) ok = decode_mp3_file(path, s);
-        if (!ok) ok = decode_wav_file(path, s);
+        // .ogg, or unknown: try OGG then MP3 then WAV
+        ok = (*vb_out = decode_ogg_open(path, s)) != NULL;
+        if (!ok && !(dot && strcasecmp(dot, ".ogg") == 0)) {
+            ok = decode_mp3_file(path, s);
+            if (!ok) ok = decode_wav_file(path, s);
+        }
     }
 
     if (!ok) {
@@ -258,7 +284,7 @@ static SfxSample *sfx_load_sample(const char *path) {
         return NULL;
     }
 
-    l_info("[audio] loaded %s (%d Hz, %d ch, %u frames)", path, s->rate, s->channels, s->frames);
+    l_info("[audio] loaded %s (%d Hz, %d ch, %u frames)", path, s->rate, s->channels, s->total);
     return s;
 }
 
@@ -334,9 +360,21 @@ static SfxSample *sfx_get(int sndId) {
  * frame-timing-critical; a sound simply "isn't ready yet" for a couple
  * frames while it decodes, same as before this loop even existed).
  */
+#define MAX_OGG_STREAMS 8
+
 static int loader_thread(SceSize args, void *argp) {
     (void) args; (void) argp;
+    // OGGs still decoding; one chunk each per loop pass, round-robin with new requests.
+    struct { stb_vorbis *vb; SfxSample *s; } streams[MAX_OGG_STREAMS];
+    int nstreams = 0;
     for (;;) {
+        for (int i = 0; i < nstreams; i++) {
+            if (!ogg_stream_step(streams[i].vb, streams[i].s)) {
+                stb_vorbis_close(streams[i].vb);
+                streams[i--] = streams[--nstreams];
+            }
+        }
+
         pthread_mutex_lock(&gQueueLock);
         int has_work = gLoadQueueCount > 0;
         int quit = gLoaderQuit;
@@ -351,14 +389,26 @@ static int loader_thread(SceSize args, void *argp) {
         if (!has_work) {
             if (quit)
                 break;
-            sceKernelDelayThread(2000);
+            if (nstreams == 0)
+                sceKernelDelayThread(2000);
             continue;
         }
 
         char path[512];
         SfxSample *s = NULL;
+        stb_vorbis *vb = NULL;
         if (resolve_sound_path(sndId, path, sizeof(path))) {
-            s = sfx_load_sample(path);
+            s = sfx_load_sample(path, &vb);
+        }
+        if (vb) {
+            if (nstreams < MAX_OGG_STREAMS) {
+                streams[nstreams].vb = vb;
+                streams[nstreams].s = s;
+                nstreams++;
+            } else {
+                while (ogg_stream_step(vb, s)) {}  // streams full: decode now, as before
+                stb_vorbis_close(vb);
+            }
         }
         if (!s)
             l_warn("[audio] background load failed for sndId %d", sndId);
@@ -367,12 +417,16 @@ static int loader_thread(SceSize args, void *argp) {
         gCache[sndId] = s ? s : SFX_FAILED;
         pthread_mutex_unlock(&gCacheLock);
     }
+    for (int i = 0; i < nstreams; i++)
+        stb_vorbis_close(streams[i].vb);
     return 0;
 }
 
 static void mix_voice(Voice *v, int *accL, int *accR, int frames) {
     if (!v->smp || v->paused) return;
     SfxSample *s = v->smp;
+    unsigned ready = s->frames;  // read once: the loader may still be appending
+    __sync_synchronize();
     for (int i = 0; i < frames; i++) {
         if (v->fadeFramesLeft > 0) {
             v->gain += v->gainStep;
@@ -381,7 +435,9 @@ static void mix_voice(Voice *v, int *accL, int *accR, int frames) {
         }
 
         unsigned f0 = v->pos_int;
-        if (f0 >= s->frames) {
+        if (f0 >= ready) {
+            if (ready < s->total)
+                break;  // still streaming in: hold position (silence) until decoded
             if (v->loop && s->frames > 0) {
                 while (v->pos_int >= s->frames) {
                     v->pos_int -= s->frames;
@@ -394,8 +450,8 @@ static void mix_voice(Voice *v, int *accL, int *accR, int frames) {
         }
 
         unsigned f1 = f0 + 1;
-        if (f1 >= s->frames) {
-            f1 = (v->loop) ? 0 : f0; // Loop around, or clamp to last frame
+        if (f1 >= ready) {
+            f1 = (v->loop && ready == s->total) ? 0 : f0; // Loop around, or clamp to last frame
         }
 
         int frac = v->pos_frac >> 24; // 8-bit fraction for interpolation (0-255)
@@ -632,7 +688,7 @@ void audio_play_sound(int sndId, int instance, float vol, float pitch, int loop)
 
     // Music/long ambient loops get their own unstolen voice (mirrors the
     // engine's own nativePlaySoundBig path for 0x800000-flagged sounds).
-    if (loop && s->frames > BIG_LOOP_FRAMES) {
+    if (loop && s->total > BIG_LOOP_FRAMES) {
         audio_play_sound_big(sndId, vol, loop);
         return;
     }

@@ -1826,7 +1826,7 @@ void video_play(const char *name) {
                  * ring_push()/draw_video_frame() size themselves from
                  * f->width/height dynamically, only slower.
                  */
-                P.vctx->lowres = 0;
+                P.vctx->lowres = 1;
                 if (avcodec_open2(P.vctx, codec, NULL) < 0) {
                     l_error("video: avcodec_open2 failed for video stream");
                     avcodec_free_context(&P.vctx);
